@@ -31,7 +31,8 @@ import { TelnetSocket } from "telnet-stream";
 
 /**
  * @typedef {Object} ReceiverZoneStatus
- * @property {boolean} power - Whether the zone is powered on.
+ * @property {boolean} power - Whether the zone is powered on. For zone 0 (Main), this reflects
+ * 		the Main Zone's own power state (ZM), independent of the receiver's master power.
  * @property {number} volume - The current volume of the zone.
  * @property {number} maxVolume - The (current) maximum volume of the receiver.
  * @property {DynamicVolume} [dynamicVolume] - Whether the volume is dynamic.
@@ -41,6 +42,9 @@ import { TelnetSocket } from "telnet-stream";
 
 /**
  * @typedef {Object} ReceiverStatus
+ * @property {boolean} masterPower - Whether the receiver's master/whole-unit power (PW) is on.
+ * 		This is distinct from zones[0].power (Main Zone/ZM) - the receiver can leave a zone
+ * 		powered while PW reports STANDBY, so both need to be tracked independently.
  * @property {ReceiverZoneStatus[]} zones - The status of each zone.
  * @property {string} statusMsg - The status message for this connection.
  */
@@ -95,6 +99,7 @@ export class AVRConnection {
 	 * @type {ReceiverStatus}
 	 */
 	status = {
+		masterPower: false,
 		zones: [
 			{
 				power: false,
@@ -355,19 +360,39 @@ export class AVRConnection {
 	/**
 	 * Set the power state
 	 * @param {boolean} [value] - The new power state to set. If not provided, toggle the current state.
-	 * @param {number} [zone=0] - The zone to set the power state for
+	 * @param {number} [zone=0] - The zone to set the power state for: 0 = Both (whole-unit master
+	 * 		power, PW), 1 = Zone 2 (Z2), 2 = Main Zone only (ZM).
 	 * @returns {boolean} Whether the command was sent successfully
 	 */
 	setPower(value, zone = 0) {
 		const telnet = this.#telnet;
-		const status = this.status.zones[zone];
-
 		if (!telnet) return false;
 
-		if (value === undefined) value = !status.power;
+		let currentPower;
+		let prefix;
+		let offCommand;
 
-		let command = ["PW", "Z2"][zone];
-		command += value ? "ON" : ["STANDBY", "OFF"][zone];
+		switch (zone) {
+			case 1: // Zone 2
+				currentPower = this.status.zones[1].power;
+				prefix = "Z2";
+				offCommand = "OFF";
+				break;
+			case 2: // Main Zone only
+				currentPower = this.status.zones[0].power;
+				prefix = "ZM";
+				offCommand = "OFF";
+				break;
+			default: // Both (whole-unit master power)
+				currentPower = this.status.masterPower;
+				prefix = "PW";
+				offCommand = "STANDBY";
+				break;
+		}
+
+		if (value === undefined) value = !currentPower;
+
+		const command = prefix + (value ? "ON" : offCommand);
 
 		telnet.write(command + "\r");
 		this.logger.debug(`Sent power command: ${command}`);
@@ -544,8 +569,15 @@ export class AVRConnection {
 			}
 
 			switch (command) {
-				case "PW": // Power
-					this.#onPowerChanged(parameter, zone);
+				case "PW": // Master power (or Zone 2 power, synthesized above)
+					if (zone === 1) {
+						this.#onPowerChanged(parameter, 1);
+					} else {
+						this.#onMasterPowerChanged(parameter);
+					}
+					break;
+				case "ZM": // Main Zone power
+					this.#onPowerChanged(parameter, 0);
 					break;
 				case "MV": // Volume or max volume
 					this.#onVolumeChanged(parameter, zone);
@@ -574,7 +606,7 @@ export class AVRConnection {
 	#onPowerChanged(parameter, zone = 0) {
 		const status = this.status.zones[zone];
 
-		// The receiver will send "ON" or "STANDBY" in zone 1, and "ON" or "OFF" in zone 2
+		// The receiver will send "ON" or "OFF" for zone power (Main Zone via "ZM", Zone 2 via "Z2")
 		// It also repeats the power status at a regular interval, so we don't need to emit an event for every message
 		const newStatus = parameter === "ON";
 		if (newStatus === status.power) return;
@@ -582,12 +614,29 @@ export class AVRConnection {
 		status.power = newStatus;
 		this.logger.debug(`Updated receiver power status for ${this.#host} Z${zone === 0 ? "M" : "2"}: ${status.power}`);
 
+		// Master and zone 0 (Main Zone) actions both key off of zone 0 for routing purposes
 		this.emit("powerChanged", zone);
 
 		// Request the full status of the receiver if it is powered on
 		// if (status.power) {
 		// 	this.#requestFullReceiverStatus();
 		// }
+	}
+
+	/**
+	 * Handle a master (whole-unit) power changed message from the receiver
+	 * @param {string} parameter - The parameter from the receiver ("ON" or "STANDBY")
+	 */
+	#onMasterPowerChanged(parameter) {
+		const newStatus = parameter === "ON";
+		if (newStatus === this.status.masterPower) return;
+
+		this.status.masterPower = newStatus;
+		this.logger.debug(`Updated receiver master power status for ${this.#host}: ${this.status.masterPower}`);
+
+		// Emitted on zone 0 so it reaches the same actions that Main Zone changes reach;
+		// updateActionState() picks the right status field based on each action's own settings
+		this.emit("powerChanged", 0);
 	}
 
 	/**
@@ -701,7 +750,8 @@ export class AVRConnection {
 		if (!telnet) return;
 
 		// Main zone
-		telnet.write("PW?\r"); // Request the power status
+		telnet.write("PW?\r"); // Request the master power status
+		telnet.write("ZM?\r"); // Request the Main Zone power status
 		telnet.write("MV?\r"); // Request the volume
 		telnet.write("MU?\r"); // Request the mute status
 		telnet.write("PSDYNVOL ?\r"); // Request the dynamic volume status

@@ -70,7 +70,14 @@ async function updateActionState(action, connection, zone) {
 	const actionZone = (/** @type {ActionSettings} */ (await action.getSettings())).zone || 0;
 	if (zone !== undefined && zone !== actionZone) { return; }
 
-	const { power } = connection !== undefined ? connection.status.zones[actionZone] : {};
+	let power;
+	if (connection !== undefined) {
+		switch (actionZone) {
+			case 1: power = connection.status.zones[1].power; break; // Zone 2
+			case 2: power = connection.status.zones[0].power; break; // Main Zone only
+			default: power = connection.status.masterPower; break; // Both
+		}
+	}
 
 	const state = power !== undefined ? power ? 0 : 1 : 1;
 	if (action.isKey()) {

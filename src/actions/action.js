@@ -29,7 +29,9 @@ import { AVRTracker } from "../modules/tracker";
  * @property {string} [uuid] - The receiver UUID to associate with this action
  * @property {string} [name] - The name of the receiver to display in the PI
  * @property {string} [statusMsg] - The connection status message to display in the PI
- * @property {number} [zone] - The zone to control on the receiver
+ * @property {number} [zone] - The zone to control on the receiver. For most actions: 0 = Main, 1 =
+ * 		Zone 2. For the Power action specifically: 0 = Both (whole-unit master power), 1 = Zone 2,
+ * 		2 = Main Zone only.
  * @property {string} [volumeAction] - The volume action to perform on the receiver
  * @property {number} [volumeLevel] - The target volume level to set on the receiver
  * @property {string} [powerAction] - The power action to perform on the receiver
@@ -261,11 +263,16 @@ export class PluginAction extends SingletonAction {
 	 * @param {ReceiverEvent} ev - The event object.
 	 */
 	routeReceiverEvent(ev) {
-		// Get the list of actions to inform of the event and add them to the event object
-		ev.actions = this.actions.toArray().filter((action) =>
-			this.actionReceiverMap[action.id]?.uuid === ev.connection.uuid &&
-			this.actionReceiverMap[action.id]?.zone === ev.zone
-		);
+		// Get the list of actions to inform of the event and add them to the event object.
+		// Power's zone 2 (Main Zone only) shares zone 0's routing bucket with "Both" (whole-unit
+		// master), since the connection always reports Main Zone/master power changes on zone 0 -
+		// the Power action itself decides which status field is relevant once it receives the event.
+		ev.actions = this.actions.toArray().filter((action) => {
+			const detail = this.actionReceiverMap[action.id];
+			if (!detail || detail.uuid !== ev.connection.uuid) return false;
+			const routingZone = detail.zone === 2 ? 0 : detail.zone;
+			return routingZone === ev.zone;
+		});
 
 		switch (ev.type) {
 			case "connected":

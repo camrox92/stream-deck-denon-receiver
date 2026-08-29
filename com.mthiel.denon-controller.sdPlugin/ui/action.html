@@ -22,10 +22,17 @@
 
 	<hr class="separator" />
 
-	<sdpi-item label="Zone" class="zone-item">
+	<sdpi-item label="Zone" class="zone-item zone-item-generic">
 		<sdpi-select setting="zone" label="Zone" default=0 value-type="number">
 			<option value=0>Main</option>
 			<option value=1>Zone 2</option>
+		</sdpi-select>
+	</sdpi-item>
+	<sdpi-item label="Zone" class="zone-item zone-item-power hidden">
+		<sdpi-select setting="zone" label="Zone" default=0 value-type="number">
+			<option value=2>Main</option>
+			<option value=1>Zone 2</option>
+			<option value=0>Both</option>
 		</sdpi-select>
 	</sdpi-item>
 

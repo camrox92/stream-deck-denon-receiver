@@ -37,9 +37,16 @@ async function updateLayoutForAction() {
 
     // Reveal the appropriate action section based on the action ID.
     switch (actionId) {
-        case "power":
+        case "power": {
             document.querySelector('.action-section.power')?.classList.remove('hidden');
+
+            // Power has its own three-option zone selector (Main / Zone 2 / Both) instead of the
+            // generic two-option one, since it's the only action with a whole-unit power concept.
+            document.querySelector('.zone-item-generic')?.classList.add('hidden');
+            document.querySelector('.zone-item-power')?.classList.remove('hidden');
+
             break;
+        }
         case "volume":
             if (controller === "Keypad") {
                 document.querySelector('.action-section.volume')?.classList.remove('hidden');
