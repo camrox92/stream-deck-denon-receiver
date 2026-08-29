@@ -68,7 +68,11 @@ export class PowerAction extends PluginAction {
  */
 async function updateActionState(action, connection, zone) {
 	const actionZone = (/** @type {ActionSettings} */ (await action.getSettings())).zone || 0;
-	if (zone !== undefined && zone !== actionZone) { return; }
+
+	// Main Zone only (2) shares zone 0's routing bucket with Both (whole-unit master), since the
+	// connection always reports Main Zone/master power changes on zone 0 - see routeReceiverEvent().
+	const routingZone = actionZone === 2 ? 0 : actionZone;
+	if (zone !== undefined && zone !== routingZone) { return; }
 
 	let power;
 	if (connection !== undefined) {
